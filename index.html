@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FaceRead — Age & Gender Scanner</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<script defer src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+<style>
+  :root {
+    --scan-green: #00ff88;
+    --scan-blue: #00cfff;
+    --dark-bg: #080c10;
+    --panel-bg: #0d1117;
+    --panel-border: #1e2d3d;
+    --text-dim: #4a6070;
+    --text-mid: #8ba7be;
+    --text-bright: #cde4f5;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--dark-bg);
+    font-family: 'DM Sans', sans-serif;
+    color: var(--text-bright);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+  .mono { font-family: 'Space Mono', monospace; }
+  .grid-bg {
+    position: fixed; inset: 0; z-index: 0;
+    background-image:
+      linear-gradient(rgba(0,207,255,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,207,255,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+  }
+  .scan-line {
+    position: absolute; left: 0; right: 0; height: 2px;
+    background: linear-gradient(90deg, transparent, var(--scan-green), transparent);
+    animation: scanline 2.4s linear infinite;
+    opacity: 0; transition: opacity 0.3s;
+  }
+  .scanning .scan-line { opacity: 1; }
+  @keyframes scanline { 0% { top: 0; } 100% { top: 100%; } }
+  .corner {
+    position: absolute; width: 20px; height: 20px;
+    border-color: var(--scan-green); border-style: solid; transition: all 0.3s;
+  }
+  .corner-tl { top: 8px; left: 8px; border-width: 2px 0 0 2px; }
+  .corner-tr { top: 8px; right: 8px; border-width: 2px 2px 0 0; }
+  .corner-bl { bottom: 8px; left: 8px; border-width: 0 0 2px 2px; }
+  .corner-br { bottom: 8px; right: 8px; border-width: 0 2px 2px 0; }
+  .video-frame {
+    position: relative; border: 1px solid var(--panel-border);
+    border-radius: 4px; overflow: hidden; background: #000; aspect-ratio: 4/3;
+  }
+  video { width: 100%; height: 100%; object-fit: cover; display: block; transform: scaleX(-1); }
+  #overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+  .status-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--text-dim); transition: all 0.3s;
+  }
+  .status-dot.live { background: var(--scan-green); box-shadow: 0 0 8px var(--scan-green); animation: pulse-dot 1.5s infinite; }
+  .status-dot.scanning { background: var(--scan-blue); box-shadow: 0 0 8px var(--scan-blue); animation: pulse-dot 0.7s infinite; }
+  .status-dot.loading { background: #efa027; box-shadow: 0 0 8px #efa027; animation: pulse-dot 0.5s infinite; }
+  @keyframes pulse-dot { 0%,100%{opacity:1;} 50%{opacity:0.4;} }
+  .btn-scan {
+    background: transparent; border: 1px solid var(--scan-green);
+    color: var(--scan-green); font-family: 'Space Mono', monospace;
+    font-size: 12px; letter-spacing: 0.1em; padding: 10px 24px;
+    cursor: pointer; transition: all 0.2s; position: relative; overflow: hidden;
+  }
+  .btn-scan::before {
+    content: ''; position: absolute; inset: 0; background: var(--scan-green);
+    transform: translateX(-100%); transition: transform 0.2s; opacity: 0.15;
+  }
+  .btn-scan:hover::before { transform: translateX(0); }
+  .btn-scan:disabled { border-color: var(--text-dim); color: var(--text-dim); cursor: not-allowed; }
+  .btn-scan:disabled::before { display: none; }
+  .btn-start {
+    background: var(--scan-green); color: #000; font-family: 'Space Mono', monospace;
+    font-size: 12px; letter-spacing: 0.1em; padding: 10px 28px;
+    cursor: pointer; font-weight: 700; border: none; transition: all 0.2s; border-radius: 2px;
+  }
+  .btn-start:hover { opacity: 0.85; }
+  .btn-start:disabled { opacity: 0.4; cursor: not-allowed; }
+  .result-card {
+    border: 1px solid var(--panel-border); background: var(--panel-bg);
+    border-radius: 4px; padding: 16px; transition: all 0.4s;
+  }
+  .result-card.active { border-color: rgba(0,207,255,0.35); }
+  .stat-label {
+    font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--text-dim); font-family: 'Space Mono', monospace; margin-bottom: 6px;
+  }
+  .stat-value {
+    font-size: 26px; font-weight: 300; color: var(--scan-blue);
+    font-family: 'Space Mono', monospace; line-height: 1.1;
+  }
+  .stat-value.gender { color: #ff7eb3; }
+  .stat-value.confidence { color: var(--scan-green); font-size: 20px; }
+  .bar-track {
+    height: 3px; background: rgba(255,255,255,0.06);
+    border-radius: 2px; overflow: hidden; margin-top: 8px;
+  }
+  .bar-fill {
+    height: 100%; border-radius: 2px; width: 0%;
+    transition: width 0.8s ease; background: var(--scan-blue);
+  }
+  .bar-fill.gender { background: #ff7eb3; }
+  .bar-fill.confidence { background: var(--scan-green); }
+  .log-entry {
+    font-size: 11px; font-family: 'Space Mono', monospace;
+    color: var(--text-dim); padding: 3px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+  }
+  .log-entry:first-child { color: var(--text-mid); }
+  .detail-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.04);
+  }
+  .detail-row:last-child { border: none; }
+  .detail-key { font-size: 11px; color: var(--text-dim); font-family: 'Space Mono', monospace; }
+  .detail-val { font-size: 12px; color: var(--text-bright); font-family: 'Space Mono', monospace; }
+  .placeholder-ring {
+    width: 64px; height: 64px; border-radius: 50%;
+    border: 1px dashed var(--panel-border);
+    display: flex; align-items: center; justify-content: center; margin: 0 auto 12px;
+  }
+  #no-face-msg {
+    display: none; position: absolute; inset: 0;
+    align-items: center; justify-content: center;
+    background: rgba(8,12,16,0.7);
+    font-family: 'Space Mono', monospace; font-size: 11px;
+    letter-spacing: 0.1em; color: #e24b4a;
+  }
+  .loading-bar {
+    height: 2px; background: var(--panel-border); border-radius: 1px; overflow: hidden; margin-top: 10px;
+  }
+  .loading-bar-fill {
+    height: 100%; background: #efa027; border-radius: 1px;
+    animation: loadpulse 1.2s ease-in-out infinite;
+  }
+  @keyframes loadpulse { 0%{width:5%;} 50%{width:80%;} 100%{width:5%;} }
+  .age-sub { font-size: 12px; color: var(--text-mid); font-family: 'Space Mono', monospace; margin-top: 2px; }
+  @keyframes fadeIn { from{opacity:0;transform:translateY(5px);} to{opacity:1;transform:translateY(0);} }
+  .fade-in { animation: fadeIn 0.35s ease forwards; }
+  .free-badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    background: rgba(0,255,136,0.08); border: 1px solid rgba(0,255,136,0.2);
+    border-radius: 3px; padding: 3px 10px;
+    font-family: 'Space Mono', monospace; font-size: 10px;
+    color: var(--scan-green); letter-spacing: 0.1em;
+  }
+  .live-badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    background: rgba(0,207,255,0.08); border: 1px solid rgba(0,207,255,0.2);
+    border-radius: 3px; padding: 3px 10px;
+    font-family: 'Space Mono', monospace; font-size: 10px;
+    color: var(--scan-blue); letter-spacing: 0.1em;
+  }
+  .expression-pill {
+    display: inline-block; padding: 2px 8px; border-radius: 3px;
+    font-size: 10px; font-family: 'Space Mono', monospace; letter-spacing: 0.06em;
+    background: rgba(0,207,255,0.1); color: var(--scan-blue);
+    border: 1px solid rgba(0,207,255,0.2);
+  }
+</style>
+</head>
+<body>
+<div class="grid-bg"></div>
+
+<div style="position:relative;z-index:1;max-width:920px;margin:0 auto;padding:24px 16px;">
+
+  <!-- Header -->
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+    <div>
+      <div class="mono" style="font-size:10px;letter-spacing:0.18em;color:var(--text-dim);margin-bottom:4px;">ON-DEVICE AI · NO API KEY REQUIRED</div>
+      <h1 style="font-size:22px;font-weight:300;letter-spacing:0.02em;">FaceRead <span style="color:var(--scan-blue);">Scanner</span></h1>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;">
+      <span class="free-badge">
+        <svg width="9" height="9" viewBox="0 0 12 12" fill="var(--scan-green)"><circle cx="6" cy="6" r="6"/></svg>
+        FREE &amp; OFFLINE
+      </span>
+      <div style="display:flex;align-items:center;gap:7px;">
+        <div class="status-dot" id="status-dot"></div>
+        <span class="mono" style="font-size:11px;color:var(--text-dim);" id="status-text">LOADING MODELS</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Model loading bar -->
+  <div id="model-loading-bar" style="margin-bottom:16px;">
+    <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
+      <span class="mono" style="font-size:10px;color:var(--text-dim);" id="model-status-text">Downloading AI models (one-time ~6MB)...</span>
+      <span class="mono" style="font-size:10px;color:var(--text-dim);" id="model-pct">0%</span>
+    </div>
+    <div class="loading-bar"><div class="loading-bar-fill" id="model-bar-fill"></div></div>
+  </div>
+
+  <!-- Main layout -->
+  <div style="display:grid;grid-template-columns:1fr 272px;gap:16px;">
+
+    <!-- Camera -->
+    <div>
+      <div class="video-frame" id="video-frame">
+        <video id="video" autoplay muted playsinline></video>
+        <canvas id="overlay"></canvas>
+        <div class="scan-line"></div>
+        <div class="corner corner-tl"></div>
+        <div class="corner corner-tr"></div>
+        <div class="corner corner-bl"></div>
+        <div class="corner corner-br"></div>
+        <div id="no-face-msg">NO FACE DETECTED</div>
+        <div id="placeholder" style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:var(--panel-bg);">
+          <div class="placeholder-ring">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="rgba(74,96,112,0.8)" stroke-width="1.5">
+              <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+              <circle cx="12" cy="13" r="4"/>
+            </svg>
+          </div>
+          <p class="mono" style="font-size:11px;color:var(--text-dim);letter-spacing:0.1em;" id="placeholder-text">LOADING AI MODELS...</p>
+          <p style="font-size:12px;color:var(--text-dim);margin-top:6px;text-align:center;max-width:200px;" id="placeholder-sub">Please wait while face-api.js loads</p>
+        </div>
+      </div>
+
+      <!-- Controls -->
+      <div style="display:flex;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap;">
+        <button class="btn-start" id="btn-start" onclick="startCamera()" disabled>ACTIVATE CAMERA</button>
+        <button class="btn-scan" id="btn-scan" onclick="doScan()" disabled>ANALYSE FRAME</button>
+        <div style="margin-left:auto;" id="live-indicator"></div>
+      </div>
+
+      <!-- Log -->
+      <div style="margin-top:14px;border:1px solid var(--panel-border);border-radius:4px;padding:10px 12px;min-height:68px;">
+        <div class="stat-label" style="margin-bottom:6px;">SYSTEM LOG</div>
+        <div id="log-entries">
+          <div class="log-entry">> Initialising face-api.js models...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Results -->
+    <div style="display:flex;flex-direction:column;gap:12px;">
+
+      <div class="result-card" id="card-age">
+        <div class="stat-label">ESTIMATED AGE</div>
+        <div class="stat-value" id="val-age">—</div>
+        <div class="age-sub" id="val-age-sub"></div>
+        <div class="bar-track"><div class="bar-fill" id="bar-age"></div></div>
+      </div>
+
+      <div class="result-card" id="card-gender">
+        <div class="stat-label">APPARENT GENDER</div>
+        <div class="stat-value gender" id="val-gender">—</div>
+        <div class="bar-track"><div class="bar-fill gender" id="bar-gender"></div></div>
+      </div>
+
+      <div class="result-card" id="card-conf">
+        <div class="stat-label">GENDER CONFIDENCE</div>
+        <div class="stat-value confidence" id="val-conf">—</div>
+        <div class="bar-track"><div class="bar-fill confidence" id="bar-conf"></div></div>
+      </div>
+
+      <div class="result-card" id="card-expr">
+        <div class="stat-label" style="margin-bottom:8px;">EXPRESSION DETECTED</div>
+        <div id="expr-body" style="display:flex;flex-wrap:wrap;gap:5px;">
+          <span style="font-size:12px;color:var(--text-dim);">Awaiting scan...</span>
+        </div>
+      </div>
+
+      <div class="result-card" id="card-details">
+        <div class="stat-label" style="margin-bottom:8px;">SCAN DETAILS</div>
+        <div id="details-body">
+          <div style="text-align:center;padding:12px 0;color:var(--text-dim);font-size:12px;">No scan yet</div>
+        </div>
+      </div>
+
+      <div style="border:1px solid rgba(0,255,136,0.15);background:rgba(0,255,136,0.04);border-radius:4px;padding:10px 12px;">
+        <div style="font-size:10px;color:var(--scan-green);font-family:'Space Mono',monospace;margin-bottom:4px;">✓ 100% FREE</div>
+        <p style="font-size:11px;color:#0f6e56;line-height:1.5;">Runs entirely in your browser. No API key, no server, no cost. Works offline after first load.</p>
+      </div>
+
+      <div style="border:1px solid rgba(186,117,23,0.2);background:rgba(186,117,23,0.05);border-radius:4px;padding:10px 12px;">
+        <div style="font-size:10px;color:#ba7517;font-family:'Space Mono',monospace;margin-bottom:4px;">⚠ NOTICE</div>
+        <p style="font-size:11px;color:#854f0b;line-height:1.5;">AI estimates only. Results may be inaccurate. Educational use only.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const MODEL_URL = 'https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/weights';
+let stream = null;
+let scanning = false;
+let modelsLoaded = false;
+let liveInterval = null;
+let frameCount = 0;
+const video = document.getElementById('video');
+const overlay = document.getElementById('overlay');
+
+function log(msg, type='normal') {
+  const c = document.getElementById('log-entries');
+  const el = document.createElement('div');
+  el.className = 'log-entry';
+  const cols = { error:'color:#e24b4a', success:'color:var(--scan-green)', info:'color:var(--scan-blue)' };
+  if (cols[type]) el.style.cssText = cols[type];
+  el.textContent = '> ' + msg;
+  c.insertBefore(el, c.firstChild);
+  while (c.children.length > 7) c.removeChild(c.lastChild);
+}
+
+function setStatus(state, label) {
+  document.getElementById('status-dot').className = 'status-dot ' + state;
+  document.getElementById('status-text').textContent = label || state.toUpperCase();
+}
+
+function setModelPct(pct, label) {
+  document.getElementById('model-pct').textContent = Math.round(pct) + '%';
+  if (label) document.getElementById('model-status-text').textContent = label;
+  const fill = document.getElementById('model-bar-fill');
+  fill.style.animation = 'none';
+  fill.style.width = pct + '%';
+  fill.style.background = pct >= 100 ? 'var(--scan-green)' : '#efa027';
+}
+
+async function loadModels() {
+  setStatus('loading', 'LOADING MODELS');
+  try {
+    log('Loading TinyFaceDetector...', 'info');
+    setModelPct(5, 'Loading face detector...');
+    await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
+    setModelPct(35, 'Loading age/gender model...');
+    log('Loading AgeGenderNet...', 'info');
+    await faceapi.nets.ageGenderNet.loadFromUri(MODEL_URL);
+    setModelPct(65, 'Loading expression model...');
+    log('Loading FaceExpressionNet...', 'info');
+    await faceapi.nets.faceExpressionNet.loadFromUri(MODEL_URL);
+    setModelPct(100, 'All models ready!');
+    modelsLoaded = true;
+    document.getElementById('btn-start').disabled = false;
+    document.getElementById('model-loading-bar').style.opacity = '0.5';
+    document.getElementById('placeholder-text').textContent = 'CAMERA INACTIVE';
+    document.getElementById('placeholder-sub').textContent = 'Models loaded. Activate camera to begin.';
+    setStatus('', 'READY');
+    log('All models loaded. Ready!', 'success');
+  } catch(e) {
+    log('Model load failed: ' + e.message, 'error');
+    setStatus('', 'ERROR');
+    setModelPct(0, 'Failed to load models. Check internet connection.');
+  }
+}
+
+async function startCamera() {
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720, facingMode: 'user' }, audio: false });
+    video.srcObject = stream;
+    await video.play();
+    document.getElementById('placeholder').style.display = 'none';
+    document.getElementById('btn-start').disabled = true;
+    document.getElementById('btn-start').textContent = 'CAMERA ACTIVE';
+    document.getElementById('btn-scan').disabled = false;
+    setStatus('live', 'LIVE');
+    log('Camera active. Click ANALYSE FRAME or enable live mode.', 'success');
+
+    video.addEventListener('loadedmetadata', () => {
+      overlay.width = video.videoWidth;
+      overlay.height = video.videoHeight;
+    });
+
+    document.getElementById('live-indicator').innerHTML = `
+      <span class="live-badge" style="cursor:pointer;" id="live-toggle" onclick="toggleLive()">
+        <svg width="8" height="8" viewBox="0 0 10 10" fill="var(--scan-blue)"><circle cx="5" cy="5" r="5"/></svg>
+        LIVE MODE: OFF
+      </span>`;
+  } catch(e) {
+    log('Camera error: ' + e.message, 'error');
+  }
+}
+
+function toggleLive() {
+  if (liveInterval) {
+    clearInterval(liveInterval);
+    liveInterval = null;
+    document.getElementById('live-toggle').innerHTML = `<svg width="8" height="8" viewBox="0 0 10 10" fill="var(--scan-blue)"><circle cx="5" cy="5" r="5"/></svg> LIVE MODE: OFF`;
+    document.getElementById('btn-scan').disabled = false;
+    log('Live mode off.', 'info');
+  } else {
+    liveInterval = setInterval(() => { if (!scanning) doScan(true); }, 1200);
+    document.getElementById('live-toggle').innerHTML = `<svg width="8" height="8" viewBox="0 0 10 10" fill="var(--scan-green)"><circle cx="5" cy="5" r="5"/></svg> LIVE MODE: ON`;
+    document.getElementById('btn-scan').disabled = true;
+    log('Live mode on — scanning every 1.2s.', 'success');
+  }
+}
+
+function drawFaceBox(detection, dims) {
+  const ctx = overlay.getContext('2d');
+  ctx.clearRect(0, 0, overlay.width, overlay.height);
+  if (!detection) return;
+
+  const scaleX = overlay.width / dims.width;
+  const scaleY = overlay.height / dims.height;
+
+  let { x, y, width, height } = detection.detection.box;
+  x = (dims.width - x - width) * scaleX;
+  y = y * scaleY;
+  width = width * scaleX;
+  height = height * scaleY;
+
+  const pad = 16;
+  const bx = x - pad, by = y - pad, bw = width + pad*2, bh = height + pad*2;
+
+  ctx.strokeStyle = '#00ff88';
+  ctx.lineWidth = 2;
+  ctx.setLineDash([]);
+  const cs = 18;
+  ctx.beginPath();
+  ctx.moveTo(bx+cs,by); ctx.lineTo(bx,by); ctx.lineTo(bx,by+cs);
+  ctx.moveTo(bx+bw-cs,by); ctx.lineTo(bx+bw,by); ctx.lineTo(bx+bw,by+cs);
+  ctx.moveTo(bx,by+bh-cs); ctx.lineTo(bx,by+bh); ctx.lineTo(bx+cs,by+bh);
+  ctx.moveTo(bx+bw-cs,by+bh); ctx.lineTo(bx+bw,by+bh); ctx.lineTo(bx+bw,by+bh-cs);
+  ctx.stroke();
+
+  ctx.strokeStyle = 'rgba(0,255,136,0.15)';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4,4]);
+  ctx.strokeRect(bx,by,bw,bh);
+  ctx.setLineDash([]);
+}
+
+async function doScan(silent=false) {
+  if (scanning || !stream || !modelsLoaded) return;
+  scanning = true;
+
+  if (!silent) {
+    const btn = document.getElementById('btn-scan');
+    btn.textContent = 'SCANNING...';
+    btn.disabled = true;
+    document.getElementById('video-frame').classList.add('scanning');
+    setStatus('scanning', 'SCANNING');
+  }
+
+  try {
+    const opts = new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.5 });
+    const result = await faceapi
+      .detectSingleFace(video, opts)
+      .withAgeAndGender()
+      .withFaceExpressions();
+
+    const dims = { width: video.videoWidth || video.clientWidth, height: video.videoHeight || video.clientHeight };
+
+    if (!result) {
+      document.getElementById('no-face-msg').style.display = 'flex';
+      drawFaceBox(null, dims);
+      if (!silent) { log('No face detected in frame.', 'error'); resetResults(); }
+    } else {
+      document.getElementById('no-face-msg').style.display = 'none';
+      drawFaceBox(result, dims);
+      renderResults(result);
+      frameCount++;
+      if (!silent) log('Scan #' + frameCount + ' — Age: ~' + Math.round(result.age) + ', Gender: ' + result.gender, 'success');
+    }
+  } catch(e) {
+    log('Scan error: ' + e.message, 'error');
+  }
+
+  if (!silent) {
+    document.getElementById('video-frame').classList.remove('scanning');
+    const btn = document.getElementById('btn-scan');
+    btn.textContent = 'ANALYSE FRAME';
+    if (!liveInterval) btn.disabled = false;
+    setStatus('live', 'LIVE');
+  }
+  scanning = false;
+}
+
+function renderResults(r) {
+  const age = Math.round(r.age);
+  document.getElementById('val-age').textContent = age;
+
+  let decade = '';
+  if (age < 13) decade = 'Child';
+  else if (age < 20) decade = 'Teenager';
+  else if (age < 30) decade = 'Young Adult';
+  else if (age < 40) decade = 'Adult';
+  else if (age < 55) decade = 'Middle-aged';
+  else if (age < 70) decade = 'Senior';
+  else decade = 'Elderly';
+  document.getElementById('val-age-sub').textContent = decade;
+
+  const ageBarPct = Math.min(100, (age / 90) * 100);
+  setTimeout(() => { document.getElementById('bar-age').style.width = ageBarPct + '%'; }, 80);
+  document.getElementById('card-age').classList.add('active');
+
+  const gender = r.gender.charAt(0).toUpperCase() + r.gender.slice(1);
+  const gv = document.getElementById('val-gender');
+  gv.textContent = gender;
+  const gc = { 'Male':'#7eb3ff', 'Female':'#ff7eb3' };
+  gv.style.color = gc[gender] || '#ff7eb3';
+  document.getElementById('bar-gender').style.background = gc[gender] || '#ff7eb3';
+  const gconfPct = Math.round(r.genderProbability * 100);
+  setTimeout(() => { document.getElementById('bar-gender').style.width = gconfPct + '%'; }, 120);
+  document.getElementById('card-gender').classList.add('active');
+
+  document.getElementById('val-conf').textContent = gconfPct + '%';
+  setTimeout(() => { document.getElementById('bar-conf').style.width = gconfPct + '%'; }, 160);
+  document.getElementById('card-conf').classList.add('active');
+
+  const exprs = r.expressions;
+  const sorted = Object.entries(exprs).sort((a,b) => b[1]-a[1]);
+  const exprColors = {
+    happy: '#00ff88', sad: '#7eb3ff', angry: '#e24b4a', fearful: '#b87eff',
+    disgusted: '#fa7f5e', surprised: '#efa027', neutral: 'var(--text-mid)'
+  };
+  const pillsHTML = sorted.slice(0,4).map(([expr, prob]) => {
+    const pct = Math.round(prob * 100);
+    if (pct < 2) return '';
+    const col = exprColors[expr] || 'var(--scan-blue)';
+    return `<span class="expression-pill" style="color:${col};border-color:${col}20;background:${col}12;">${expr} ${pct}%</span>`;
+  }).join('');
+  document.getElementById('expr-body').innerHTML = `<div class="fade-in" style="display:flex;flex-wrap:wrap;gap:5px;">${pillsHTML}</div>`;
+  document.getElementById('card-expr').classList.add('active');
+
+  const dominant = sorted[0][0];
+  const rows = [
+    ['Dominant expr.', dominant.charAt(0).toUpperCase() + dominant.slice(1)],
+    ['Detection conf.', Math.round(r.detection.score * 100) + '%'],
+    ['Scan #', '#' + (frameCount + 1)],
+  ];
+  document.getElementById('details-body').innerHTML = `<div class="fade-in">${
+    rows.map(([k,v]) => `<div class="detail-row"><span class="detail-key">${k}</span><span class="detail-val">${v}</span></div>`).join('')
+  }</div>`;
+  document.getElementById('card-details').classList.add('active');
+}
+
+function resetResults() {
+  ['val-age','val-gender','val-conf'].forEach(id => document.getElementById(id).textContent = '—');
+  document.getElementById('val-age-sub').textContent = '';
+  ['bar-age','bar-gender','bar-conf'].forEach(id => document.getElementById(id).style.width = '0%');
+  document.getElementById('expr-body').innerHTML = '<span style="font-size:12px;color:var(--text-dim);">No face detected</span>';
+  document.getElementById('details-body').innerHTML = '<div style="text-align:center;padding:12px 0;color:var(--text-dim);font-size:12px;">No face in frame</div>';
+}
+
+window.addEventListener('load', () => {
+  const checkFaceApi = setInterval(() => {
+    if (typeof faceapi !== 'undefined') {
+      clearInterval(checkFaceApi);
+      loadModels();
+    }
+  }, 100);
+});
+</script>
+</body>
+</html>
